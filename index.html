@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Military Threat Exposure Map</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; background: #f5f5f5; color: #111; }
+  #topbar { padding: 10px 16px; background: #fff; border-bottom: 1px solid #ddd; }
+  #topbar h1 { font-size: 15px; font-weight: bold; }
+  #topbar p { font-size: 11px; color: #666; margin-top: 3px; }
+  #controls { padding: 8px 16px; background: #fff; border-bottom: 1px solid #ddd; display: flex; gap: 16px; align-items: center; font-size: 12px; flex-wrap: wrap; }
+  #controls label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+  #opacity-wrap { display: flex; align-items: center; gap: 8px; }
+  #export-btn { margin-left: auto; padding: 6px 14px; background: #2166ac; color: #fff; border: none; border-radius: 4px; font-size: 12px; cursor: pointer; font-weight: bold; }
+  #export-btn:hover { background: #174f80; }
+  #map { width: 100%; background: #c8d8e8; }
+  #legend { display: flex; flex-wrap: wrap; gap: 10px; padding: 10px 16px; background: #fff; border-top: 1px solid #ddd; font-size: 12px; }
+  #legend span { display: flex; align-items: center; gap: 5px; }
+  #legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex-shrink:0; }
+  #tooltip { position: fixed; background: rgba(0,0,0,0.8); color: #fff; padding: 6px 10px; border-radius: 4px; font-size: 12px; pointer-events: none; display: none; z-index: 100; }
+</style>
+</head>
+<body>
+<div id="topbar">
+  <h1>Military Threat Exposure Map — Mathematics IA</h1>
+  <p>Missile ranges, operational base ranges and overseas military bases of the 10 most militarily active countries. Sources: SIPRI 2025 · IISS ACS 2025 · CSIS Missile Defense Project.</p>
+</div>
+<div id="controls">
+  <label><input type="checkbox" id="chk-ranges" checked> Country ranges</label>
+  <label><input type="checkbox" id="chk-bases" checked> Base locations</label>
+  <label><input type="checkbox" id="chk-baseranges" checked> Base operational ranges</label>
+  <label><input type="checkbox" id="chk-labels" checked> Labels</label>
+  <div id="opacity-wrap">
+    <span>Opacity:</span>
+    <input type="range" id="opacity-slider" min="5" max="60" value="18" step="1" style="width:100px;">
+    <span id="opacity-val">18%</span>
+  </div>
+  <button id="export-btn">Export JPG</button>
+</div>
+<div id="map"></div>
+<div id="legend"></div>
+<div id="tooltip"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+<script>
+const powers = [
+  { name:"USA", lat:38, lon:-97, range:13000, color:"#2166ac", bases:[
+    {name:"Al Udeid AB, Qatar",       lat:25.1, lon:51.3,  range:2000},
+    {name:"Ali Al Salem AB, Kuwait",  lat:29.4, lon:47.5,  range:1500},
+    {name:"NSA Bahrain",              lat:26.2, lon:50.6,  range:2200},
+    {name:"Al Dhafra AB, UAE",        lat:24.2, lon:54.5,  range:2800},
+    {name:"Prince Sultan AB, KSA",    lat:24.9, lon:47.6,  range:2000},
+    {name:"Incirlik AB, Turkey",      lat:37.0, lon:35.4,  range:1600},
+  ]},
+  { name:"Russia", lat:55, lon:37, range:11000, color:"#d73027", bases:[
+    {name:"Hmeimim AB, Syria",        lat:35.4, lon:35.9,  range:1500},
+    {name:"Tartus Naval Base, Syria", lat:34.9, lon:35.9,  range:2500},
+    {name:"Machulishchi AB, Belarus", lat:53.9, lon:27.6,  range:1200},
+    {name:"Kant AB, Kazakhstan",      lat:42.8, lon:74.8,  range:1500},
+  ]},
+  { name:"China", lat:39, lon:116, range:12000, color:"#f46d43", bases:[
+    {name:"Djibouti Support Base",    lat:11.5, lon:43.1,  range:800},
+    {name:"Fiery Cross Reef",         lat:9.5,  lon:114.2, range:1500},
+    {name:"Subi Reef",                lat:10.9, lon:114.1, range:1500},
+  ]},
+  { name:"UK", lat:51, lon:-1, range:9600, color:"#4d9221", bases:[
+    {name:"RAF Akrotiri, Cyprus",     lat:34.6, lon:32.9,  range:1500},
+    {name:"Mount Pleasant, Falklands",lat:-51.8,lon:-58.4, range:1500},
+    {name:"NSF Bahrain",              lat:26.2, lon:50.5,  range:2000},
+  ]},
+  { name:"France", lat:48, lon:2, range:6000, color:"#762a83", bases:[
+    {name:"Gao Base, Mali",           lat:16.3, lon:-0.0,  range:1800},
+    {name:"Camp Lemonnier, Djibouti", lat:11.5, lon:43.2,  range:1850},
+    {name:"Abu Dhabi Base, UAE",      lat:24.5, lon:54.4,  range:1850},
+    {name:"Port Bouet, Ivory Coast",  lat:5.4,  lon:-4.0,  range:800},
+  ]},
+  { name:"Turkey", lat:39, lon:35, range:2500, color:"#e08214", bases:[
+    {name:"Al-Bab Base, Syria",       lat:36.4, lon:37.5,  range:1000},
+    {name:"Misrata Base, Libya",      lat:32.4, lon:15.1,  range:800},
+    {name:"Qatar area",               lat:25.3, lon:51.5,  range:500},
+    {name:"Mogadishu, Somalia",       lat:2.0,  lon:45.3,  range:500},
+  ]},
+  { name:"Israel", lat:31, lon:35, range:11500, color:"#1a9850", bases:[
+    {name:"Ramon Air Base",           lat:30.8, lon:34.8,  range:1900},
+    {name:"Nevatim Air Base",         lat:31.2, lon:35.0,  range:1900},
+  ]},
+  { name:"Iran", lat:35, lon:51, range:2000, color:"#8c510a", bases:[
+    {name:"Proxy - Damascus, Syria",  lat:33.5, lon:36.3,  range:300},
+    {name:"Proxy - Baghdad, Iraq",    lat:33.3, lon:44.4,  range:700},
+    {name:"Proxy - Sanaa, Yemen",     lat:15.4, lon:44.2,  range:200},
+  ]},
+  { name:"India", lat:28, lon:77, range:10000, color:"#01665e", bases:[
+    {name:"INS Dwarka",               lat:22.3, lon:68.9,  range:1500},
+    {name:"INS Baaz, Andaman Islands",lat:13.1, lon:92.7,  range:2200},
+  ]},
+  { name:"Saudi Arabia", lat:24, lon:45, range:2800, color:"#c51b7d", bases:[
+    {name:"King Khalid AB",           lat:18.3, lon:42.8,  range:1900},
+    {name:"Yemen operations",         lat:15.6, lon:48.5,  range:500},
+  ]},
+];
+
+const W = 960, H = 500;
+const proj = d3.geoNaturalEarth1().scale(153).translate([W/2, H/2]);
+const pathGen = d3.geoPath(proj);
+const tooltip = document.getElementById("tooltip");
+
+const svg = d3.select("#map").append("svg")
+  .attr("viewBox", `0 0 ${W} ${H}`)
+  .attr("width","100%")
+  .attr("id","main-svg");
+
+svg.append("rect").attr("width",W).attr("height",H).attr("fill","#c8d8e8");
+
+function kmToPixels(km) {
+  const c = proj([0,0]);
+  const e = proj([km/111.32, 0]);
+  return Math.abs(e[0]-c[0]);
+}
+
+let rangeGroup, baseRangeGroup, baseGroup, dotGroup, labelGroup;
+let currentOpacity = 0.18;
+
+function draw() {
+  if (rangeGroup)     rangeGroup.selectAll("*").remove();
+  if (baseRangeGroup) baseRangeGroup.selectAll("*").remove();
+  if (baseGroup)      baseGroup.selectAll("*").remove();
+  if (dotGroup)       dotGroup.selectAll("*").remove();
+  if (labelGroup)     labelGroup.selectAll("*").remove();
+
+  const showRanges     = document.getElementById("chk-ranges").checked;
+  const showBases      = document.getElementById("chk-bases").checked;
+  const showBaseRanges = document.getElementById("chk-baseranges").checked;
+  const showLabels     = document.getElementById("chk-labels").checked;
+
+  powers.forEach(p => {
+    const [cx,cy] = proj([p.lon, p.lat]);
+
+    if (showRanges) {
+      rangeGroup.append("circle")
+        .attr("cx",cx).attr("cy",cy).attr("r", kmToPixels(p.range))
+        .attr("fill", p.color)
+        .attr("stroke", p.color)
+        .attr("stroke-width", 1.5)
+        .attr("stroke-opacity", 0.6)
+        .attr("fill-opacity", currentOpacity)
+        .on("mouseover",(e)=>{ tooltip.style.display="block"; tooltip.textContent=`${p.name} — missile range: ${p.range.toLocaleString()} km`; })
+        .on("mousemove",(e)=>{ tooltip.style.left=(e.clientX+12)+"px"; tooltip.style.top=(e.clientY-28)+"px"; })
+        .on("mouseout",()=>tooltip.style.display="none");
+    }
+
+    p.bases.forEach(b => {
+      const [bx,by] = proj([b.lon, b.lat]);
+
+      if (showBaseRanges) {
+        baseRangeGroup.append("circle")
+          .attr("cx",bx).attr("cy",by).attr("r", kmToPixels(b.range))
+          .attr("fill", p.color)
+          .attr("stroke", p.color)
+          .attr("stroke-width", 0.8)
+          .attr("stroke-opacity", 0.5)
+          .attr("fill-opacity", currentOpacity * 0.7)
+          .attr("stroke-dasharray","4,2")
+          .on("mouseover",(e)=>{ tooltip.style.display="block"; tooltip.textContent=`${p.name} base: ${b.name} — operational range: ${b.range.toLocaleString()} km`; })
+          .on("mousemove",(e)=>{ tooltip.style.left=(e.clientX+12)+"px"; tooltip.style.top=(e.clientY-28)+"px"; })
+          .on("mouseout",()=>tooltip.style.display="none");
+      }
+
+      if (showBases) {
+        baseGroup.append("rect")
+          .attr("x",bx-3.5).attr("y",by-3.5)
+          .attr("width",7).attr("height",7)
+          .attr("fill", p.color)
+          .attr("stroke","#000")
+          .attr("stroke-width",0.5)
+          .attr("opacity",0.9)
+          .on("mouseover",(e)=>{ tooltip.style.display="block"; tooltip.textContent=`${p.name}: ${b.name} (range: ${b.range.toLocaleString()} km)`; })
+          .on("mousemove",(e)=>{ tooltip.style.left=(e.clientX+12)+"px"; tooltip.style.top=(e.clientY-28)+"px"; })
+          .on("mouseout",()=>tooltip.style.display="none");
+      }
+    });
+
+    dotGroup.append("circle")
+      .attr("cx",cx).attr("cy",cy).attr("r",5)
+      .attr("fill",p.color).attr("stroke","#000").attr("stroke-width",0.8);
+
+    if (showLabels) {
+      labelGroup.append("text")
+        .attr("x",cx+7).attr("y",cy+4)
+        .attr("font-size","9px").attr("font-family","Arial,sans-serif")
+        .attr("font-weight","bold").attr("fill","#111")
+        .text(p.name);
+    }
+  });
+}
+
+d3.json("https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json").then(world => {
+  svg.append("g").selectAll("path")
+    .data(topojson.feature(world, world.objects.countries).features)
+    .join("path").attr("d", pathGen)
+    .attr("fill","#e0e0e0").attr("stroke","#fff").attr("stroke-width",0.4);
+
+  rangeGroup     = svg.append("g");
+  baseRangeGroup = svg.append("g");
+  baseGroup      = svg.append("g");
+  dotGroup       = svg.append("g");
+  labelGroup     = svg.append("g");
+
+  draw();
+
+  document.getElementById("chk-ranges").addEventListener("change", draw);
+  document.getElementById("chk-bases").addEventListener("change", draw);
+  document.getElementById("chk-baseranges").addEventListener("change", draw);
+  document.getElementById("chk-labels").addEventListener("change", draw);
+  document.getElementById("opacity-slider").addEventListener("input", function() {
+    currentOpacity = this.value / 100;
+    document.getElementById("opacity-val").textContent = this.value + "%";
+    draw();
+  });
+
+  document.getElementById("export-btn").addEventListener("click", () => {
+    const svgEl = document.getElementById("main-svg");
+    const serializer = new XMLSerializer();
+    const svgStr = serializer.serializeToString(svgEl);
+    const canvas = document.createElement("canvas");
+    const scale = 3;
+    canvas.width = W * scale;
+    canvas.height = H * scale;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#c8d8e8";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const img = new Image();
+    const blob = new Blob([svgStr], {type:"image/svg+xml;charset=utf-8"});
+    const url = URL.createObjectURL(blob);
+    img.onload = () => {
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      const a = document.createElement("a");
+      a.download = "military_threat_exposure_map.jpg";
+      a.href = canvas.toDataURL("image/jpeg", 0.95);
+      a.click();
+    };
+    img.src = url;
+  });
+
+  const legend = document.getElementById("legend");
+  powers.forEach(p => {
+    const s = document.createElement("span");
+    s.innerHTML = `<span class="dot" style="background:${p.color}"></span>${p.name} (${(p.range/1000).toFixed(0)}k km)`;
+    legend.appendChild(s);
+  });
+  const note = document.createElement("span");
+  note.style.cssText = "font-size:11px;color:#666;width:100%;margin-top:4px;";
+  note.textContent = "Solid circles = missile range from capital. Dashed circles = operational range from each base. Squares = base locations.";
+  legend.appendChild(note);
+
+}).catch(() => {
+  d3.select("#map").append("div").style("padding","20px").style("color","red")
+    .text("Could not load world map. Check internet connection.");
+});
+</script>
+</body>
+</html>
